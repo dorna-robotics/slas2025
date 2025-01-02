@@ -53,6 +53,10 @@ def best_pick(detection_result, rvec_base, joint, robot, T_cam_inv, camera_matri
     rotation = [i*360/16 for i in range(32)]
     
     for i in range(len(detection_result)):
+        # belongs to pick
+        if "tcp" not in detection_result[i]:
+            continue
+
         # tcp
         robot.kinematic.set_tcp_xyzabc(detection_result[i]["tcp"])
 
@@ -77,7 +81,9 @@ def best_pick(detection_result, rvec_base, joint, robot, T_cam_inv, camera_matri
         # best pose
         if len(pose_valid):
             candiate = [x[0] for x in pose_valid]
+            s = time.time()
             pose_best = robot.kinematic.nearest_pose(candiate, np.array(joint)*np.pi/180)
+            print(time.time()-s)
             label = detection_result[i]["cls"]
             indx = candiate.index(pose_best)
             start = pose_valid[indx][1]
@@ -89,7 +95,10 @@ def best_pick(detection_result, rvec_base, joint, robot, T_cam_inv, camera_matri
 
 
 def decap(robot, cap_type, output_gripper_config, output_decap_config, place_position, tcp, round):
-    # approach
+    # release vial
+    robot.set_output(output_gripper_config[0], output_gripper_config[2])
+
+    # go down
     robot.go((np.array(place_position[cap_type])+np.array([0, 0, -23, 0, 0, 0])).tolist(), tcp=tcp[cap_type], motion="lmove")
 
     #hold
@@ -105,7 +114,8 @@ def decap(robot, cap_type, output_gripper_config, output_decap_config, place_pos
         robot.jmove(rel=1, j5=90, vel=200, accel=2000, jerk=6000)
 
     # grab the cap
-    robot.set_output(output_gripper_config[0], output_gripper_config[1]) # close
+    #robot.set_output(output_gripper_config[0], output_gripper_config[1])
+
 
 
 def barcode_read(robot, detection=None, num_img=10, bound=[-90, 90]):
@@ -113,5 +123,7 @@ def barcode_read(robot, detection=None, num_img=10, bound=[-90, 90]):
     bound = [-90, 90]
 
     for i in range(num_img):
-        robot.jmove(rel=0, j5=bound[0]+i*(bound[1]-bound[0])/num_img)
+        robot.jmove(rel=0, j5=bound[0]+i*(bound[1]-bound[0])/num_img, vel=200, accel=2000, jerk=6000)
         time.sleep(0.1)
+    
+    return True
