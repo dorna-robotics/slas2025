@@ -1,11 +1,52 @@
 import numpy as np
 import cv2 as cv
-from shapely.geometry import LineString, Point, Polygon
+from shapely.geometry import LineString, Point, Polygon, box
 from shapely.affinity import scale
 from itertools import permutations
 import time
 
-def free_line(start, end, bb_list, padding, thickness):
+def free_line(pixel_list, center, bb_list, padding, thickness):
+    """
+    Check if a thickened line between 'start' and 'end' intersects any ellipse 
+    inscribed within the bounding boxes (adjusted for padding).
+    """
+    # Define the line segment and thicken it
+    line_list = [LineString([pixel, center]) for pixel in pixel_list]
+    thick_line_list = [line.buffer(thickness / 2, cap_style=1) for line in line_list]
+
+    # List to store ellipses and padded bounding boxes for optional plotting
+    ellipses = []
+    padded_bbs = []
+
+    # Check intersection with all ellipses
+    for bb in bb_list:
+        # Calculate the coordinates of the expanded bounding box
+        bb_array = np.array(bb)
+        # Create new expanded bounding box with padding
+        padded_bb = np.array([
+            [bb_array[0][0] - padding, bb_array[0][1] - padding],
+            [bb_array[1][0] + padding, bb_array[1][1] - padding],
+            [bb_array[2][0] + padding, bb_array[2][1] + padding],
+            [bb_array[3][0] - padding, bb_array[3][1] + padding]
+        ])
+        
+        # Calculate the center and width/height of the padded bounding box
+        center = padded_bb.mean(axis=0)
+        width = np.abs(padded_bb[1][0] - padded_bb[0][0])
+        height = np.abs(padded_bb[2][1] - padded_bb[1][1])
+
+        # Define the inscribed ellipse using scaling
+        unit_circle = Point(center).buffer(1)  # Create a unit circle
+        ellipse = scale(unit_circle, xfact=width / 2, yfact=height / 2, origin=(center[0], center[1]))
+        ellipses.append(ellipse)
+        padded_bbs.append(padded_bb)
+        # Check if thickened line intersects the ellipse
+        if any([thick_line.intersects(ellipse) for thick_line in thick_line_list]):
+            return False  # Invalid if it intersects
+
+    return True
+
+def free_line_old(start, end, bb_list, padding, thickness):
     """
     Check if a thickened line between 'start' and 'end' intersects any ellipse 
     inscribed within the bounding boxes (adjusted for padding).
@@ -40,7 +81,6 @@ def free_line(start, end, bb_list, padding, thickness):
         ellipse = scale(unit_circle, xfact=width / 2, yfact=height / 2, origin=(center[0], center[1]))
         ellipses.append(ellipse)
         padded_bbs.append(padded_bb)
-
         # Check if thickened line intersects the ellipse
         if thick_line.intersects(ellipse):
             return False  # Invalid if it intersects
@@ -48,11 +88,14 @@ def free_line(start, end, bb_list, padding, thickness):
     return True
 
 
-def valid_pick(pose, bb_list, robot, cam_T, camera_matrix, dist_coeffs, padding, length, thickness):
+def valid_pick_old(pose, bb_list, robot, cam_T, camera_matrix, dist_coeffs, padding, length, thickness, finger_location, center):
+    # iinit
+    valid = False
+    start = (0, 0)
+    end = (0, 0)
 
     T_target_to_frame = robot.kinematic.xyzabc_to_mat(pose)
     T_target_to_cam = np.matmul(np.linalg.inv(cam_T), T_target_to_frame)
-
     #  X, Y, Z, O
     X = np.array([T_target_to_cam[i, 0] for i in range(3)])
     O = np.array([T_target_to_cam[i, 3] for i in range(3)])
@@ -60,20 +103,117 @@ def valid_pick(pose, bb_list, robot, cam_T, camera_matrix, dist_coeffs, padding,
     #Perform projection
     point_list = np.array([O+(length/2)*X, O-(length/2)*X])
 
-    res_list, _ =  cv.projectPoints(point_list, np.zeros((3, 1)), np.zeros((3, 1)), camera_matrix, dist_coeffs)
-    start = (int(res_list[0][0][0]), int(res_list[0][0][1]))
-    end = (int(res_list[1][0][0]), int(res_list[1][0][1]))
+    try:
+        res_list, _ =  cv.projectPoints(point_list, np.zeros((3, 1)), np.zeros((3, 1)), camera_matrix, dist_coeffs)
+        start = ((res_list[0][0][0]), (res_list[0][0][1]))
+        end = ((res_list[1][0][0]), (res_list[1][0][1]))
+        if center is not None:
+            offset = (center[0]-(start[0]+end[0])/2, center[1]-(start[1]+end[1])/2)
+            start = (int(start[0]+offset[0]), int(start[1]+offset[1]))
+            end = (int(end[0]+offset[0]), int(end[1]+offset[1]))
 
-    valid = free_line(start, end, bb_list, padding, thickness)
-        
+        valid = free_line(start, end, bb_list, padding, thickness)
+    except:
+        pass
     return valid, start, end
 
 
-def best_pick(detection_result, rvec_base, joint, robot, T_cam_inv, camera_matrix, dist_coeffs, padding, gripper_opening, freedom, gripper_thickness=8, xyz_min=110, aspect_ratio=0.9, num_sample=32): 
+
+def valid_pick(pose, bb_list, robot, cam_T, camera_matrix, dist_coeffs, padding, length, thickness, finger_location, center):
+    # iinit
+    valid = False
+    
+    pose_all = [pose[0:3]+robot.kinematic.rotate_rvec(rvec=pose[3:], axis=[0,0,1], angle=r, local=True) for r in finger_location]
+    point_list = []
+    for pose in pose_all:
+        T_target_to_frame = robot.kinematic.xyzabc_to_mat(pose)
+        T_target_to_cam = np.matmul(np.linalg.inv(cam_T), T_target_to_frame)
+        #  X, Y, Z, O
+        X = np.array([T_target_to_cam[i, 0] for i in range(3)])
+        O = np.array([T_target_to_cam[i, 3] for i in range(3)])
+        point_list.append([O+(length/2)*X])
+
+    # add O
+    point_list.append([O])
+    
+    #Perform projection
+    try:
+        res_list, _ =  cv.projectPoints(np.array(point_list), np.zeros((3, 1)), np.zeros((3, 1)), camera_matrix, dist_coeffs)
+        pixel_list = [((res_list[i][0][0]), (res_list[i][0][1])) for i in range(len(res_list))]
+        projected_center = pixel_list.pop(-1)
+        offset = (center[0]-projected_center[0], center[1]-projected_center[1])
+        for i in range (len(pixel_list)):
+            pixel_list[i] = (int(pixel_list[i][0]+offset[0]), int(pixel_list[i][1]+offset[1]))
+
+        valid = free_line(pixel_list, center, bb_list, padding, thickness)
+    except:
+        pass
+    return valid, pixel_list, center
+
+
+def best_pick(detection_result, rvec_base, joint, robot, T_cam_inv, camera_matrix, dist_coeffs, padding, gripper_opening, freedom, gripper_thickness=8, xyz_min=110, aspect_ratio=0.9, num_sample=32, seach_rotation=[0, 360], finger_location=[0, 180], bb_radius=float('inf')): 
 
     # init
     retval = None
-    rotation = [i*360/num_sample for i in range(num_sample)]
+    rotation = [seach_rotation[0]+i*(seach_rotation[1]-seach_rotation[0])/num_sample for i in range(num_sample)]
+    
+    for i in range(len(detection_result)):
+        print("#######", i,"#######")
+        # belongs to the pick class
+        if "tcp" not in detection_result[i]:
+            continue
+        
+        #xyz
+        xyz = detection_result[i]["xyz"]
+        
+        # xyz_min
+        if xyz[2] < xyz_min:
+            continue
+
+        # aspect ratio
+        corners = np.array(detection_result[i]["corners"])
+        sides = np.linalg.norm(np.roll(corners, -1, axis=0) - corners, axis=1)
+        aspect_ratio = np.min(sides) / np.max(sides)
+        if aspect_ratio < aspect_ratio:
+            continue
+        
+        # tcp
+        robot.kinematic.set_tcp_xyzabc(detection_result[i]["tcp"])
+
+        # bb list
+        bb_list = [r["corners"] for r in detection_result if np.linalg.norm(np.array(r["center"])-np.array(detection_result[i]["center"])) < bb_radius]
+        bb_list.pop(i)
+
+        # candidates
+        pose_candidate = [xyz+robot.kinematic.rotate_rvec(rvec=rvec_base, axis=[0,0,1], angle=r, local=True) for r in rotation]
+        
+        # valid candidates
+        pose_valid = []
+        pose_not_valid = []
+        for pose in pose_candidate:
+            valid, pixel_list, o = valid_pick(pose, bb_list, robot, T_cam_inv, camera_matrix, dist_coeffs, padding, gripper_opening, gripper_thickness, finger_location, center=detection_result[i]["center"])
+            if valid:
+                pose_valid.append([pose, pixel_list, o])
+            else:
+                pose_not_valid.append([pose, pixel_list, o])
+        
+        # best pose
+        if len(pose_valid):
+            candiate = [x[0] for x in pose_valid]
+            pose_best = robot.kinematic.nearest_pose(candiate, joint, freedom)
+            label = detection_result[i]["cls"]
+            indx = candiate.index(pose_best)
+            start = pose_valid[indx][1]
+            end = pose_valid[indx][2]
+            retval = pose_best, label, start, end, pose_valid, pose_not_valid, detection_result[i]
+            break
+
+    return retval
+def best_pick_old(detection_result, rvec_base, joint, robot, T_cam_inv, camera_matrix, dist_coeffs, padding, gripper_opening, freedom, gripper_thickness=8, xyz_min=110, aspect_ratio=0.9, num_sample=32, seach_rotation=[0, 360], finger_location=[0, 180]): 
+
+    # init
+    retval = None
+    rotation = [seach_rotation[0]+i*(seach_rotation[1]-seach_rotation[0])/num_sample for i in range(num_sample)]
     
     for i in range(len(detection_result)):
         # belongs to the pick class
@@ -108,7 +248,7 @@ def best_pick(detection_result, rvec_base, joint, robot, T_cam_inv, camera_matri
         pose_valid = []
         pose_not_valid = []
         for pose in pose_candidate:
-            valid, start, end = valid_pick(pose, bb_list, robot, T_cam_inv, camera_matrix, dist_coeffs, padding, gripper_opening, gripper_thickness)
+            valid, start, end = valid_pick(pose, bb_list, robot, T_cam_inv, camera_matrix, dist_coeffs, padding, gripper_opening, gripper_thickness, finger_location, center=detection_result[i]["center"])
             if valid:
                 pose_valid.append([pose, start, end])
             else:
@@ -120,10 +260,9 @@ def best_pick(detection_result, rvec_base, joint, robot, T_cam_inv, camera_matri
             pose_best = robot.kinematic.nearest_pose(candiate, joint, freedom)
             label = detection_result[i]["cls"]
             indx = candiate.index(pose_best)
-            start = pose_valid[indx][1]
-            end = pose_valid[indx][2]
-            retval = pose_best, label, start, end, pose_valid, pose_not_valid
-            
+            best_pxl_listart = pose_valid[indx][1]
+            best_center = pose_valid[indx][2]
+            retval = pose_best, label, best_pxl_listart, best_center, pose_valid, pose_not_valid, detection_result[i]
             break
 
     return retval
@@ -198,7 +337,7 @@ class Plane_finder:
         # Return the average error in pixels
         return np.mean(error)
 
-    def estimate_pose(self, object_points, image_points):
+    def estimate_pose(self, bb_plane, corners, shape, thr=50, overlap=0.7):
         """
         Estimate the pose (rvec and tvec) based on object points and image points.
 
@@ -206,37 +345,55 @@ class Plane_finder:
         :param image_points: 2D image points.
         :return: (rvec, tvec) if a solution is found, None otherwise.
         """
-        if len(object_points) != 4:
-            return None
-        
-        object_points = np.array(object_points, dtype=np.float32)
-        #image_points = np.array(image_points, dtype=np.float32)
-
+        # Initialize variables
         best_rvec = None
         best_tvec = None
         best_reprojection_error = float('inf')  # Initialize with a large value
-        
-        # Try all permutations of the image points
-        for perm in permutations(image_points, len(image_points)):
+
+        # Define the 3D object points
+        object_points = np.array([
+        [0, 0, 0],   # Corner 1
+        [shape[0], 0, 0],   # Corner 2
+        [shape[0], shape[1], 0],
+        [0, shape[1], 0]], dtype=np.float32)
+
+        # contour
+        bb_contour = np.array(bb_plane, dtype=np.int32).reshape((-1, 1, 2)) 
+        polygon_bb_plane = box(*Polygon(bb_plane).bounds)
+
+        # remove all the corners that are far from the plane_bb
+        corners = [c for c in corners if abs(cv.pointPolygonTest(bb_contour, c, True)) < thr]
+        if len(corners) < len(object_points):
+            return None
+
+        # all the combinations
+        candidates = []
+        for pts in permutations(corners, len(object_points)):
+            # polygon
+            polygon = Polygon(pts)
+
+            # check if the polygon is valid
+            if not polygon.is_valid:
+                continue
+
+            # cehck if polygon and bb overlap significantly
+            polygon_bb = box(*polygon.bounds)  # Create a polygon from the bounding box
+            if polygon_bb.intersection(polygon_bb_plane).area / (polygon_bb.union(polygon_bb_plane).area) < overlap:
+                continue
+
+            # add to the candidates
+            candidates.append(pts)
+
+        # Try all 
+        for perm in candidates:
             # Solve PnP using RANSAC to get the rotation (rvec) and translation (tvec)
             try:
                 success, rvec, tvec, _ = cv.solvePnPRansac(object_points, np.array(perm, dtype=np.float32), 
                                                                 self.camera_matrix, self.dist_coeffs)    
-
-                """
-                success, rvec, tvec = cv.solvePnP(
-                    object_points, 
-                    np.array(perm, dtype=np.float32), 
-                    self.camera_matrix, 
-                    self.dist_coeffs, 
-                    flags=cv.SOLVEPNP_P3P
-                )
-                """
-
                 if success:
                     # Calculate reprojection error
                     reprojection_error = self.calculate_reprojection_error(object_points, np.array(perm, dtype=np.float32), rvec, tvec)
-                    
+
                     # If the reprojection error is smaller than the threshold, update the best solution
                     if reprojection_error < best_reprojection_error and reprojection_error < self.min_error_threshold:
                         best_reprojection_error = reprojection_error
@@ -248,6 +405,7 @@ class Plane_finder:
         if best_rvec is not None and best_tvec is not None:
             # Convert rotation vector to rotation matrix
             rotation_matrix, _ = cv.Rodrigues(best_rvec)
+            
             # Extract Z-axis direction
             z_axis = rotation_matrix[:, 2]  # Third column of rotation matrix
             if z_axis[2] < 0:
@@ -268,8 +426,7 @@ class Plane_finder:
             # Create a 4x4 transformation matrix
             transformation_matrix = np.eye(4)  # Initialize as identity matrix
             transformation_matrix[:3, :3] = rotation_matrix  # Top-left 3x3 is the rotation matrix
-            transformation_matrix[:3, 3] = tvec.flatten()    # Top-right 3x1 is the translation vector
-
+            transformation_matrix[:3, 3] = best_tvec.flatten()    # Top-right 3x1 is the translation vector
             T_target_to_frame = np.matmul(self.frame_mat_inv, transformation_matrix)
 
             # adjust z axis of T_target_to_frame
@@ -299,6 +456,10 @@ class Plane_finder:
             T_target_to_frame[:3, 3] = t  # Keep the original translation
 
             pose_target_to_frame = self.kinematic.mat_to_xyzabc(T_target_to_frame).tolist()
+
+            # bset rvec and tvec
+            self.best_rvec = best_rvec
+            self.best_tvec = best_tvec
             return pose_target_to_frame
         else:
             return None
@@ -313,8 +474,7 @@ def vial_pick_candidate(candidates, r_base, joint, kinematic, freedom, rotation=
         # aspect ratio
         corners = np.array(r["corners"])
         sides = np.linalg.norm(np.roll(corners, -1, axis=0) - corners, axis=1)
-        aspect_ratio = np.min(sides) / np.max(sides)
-        if aspect_ratio < aspect_ratio:
+        if np.min(sides) / np.max(sides) < aspect_ratio:
             continue
         
         # tcp
@@ -329,5 +489,3 @@ def vial_pick_candidate(candidates, r_base, joint, kinematic, freedom, rotation=
         break
 
     return retval
-
-
