@@ -5,6 +5,31 @@ from shapely.affinity import scale
 from itertools import permutations
 import time
 
+def volume_estimator(h, tube):
+    ref = {
+        "15ml_cap": [[0, 0.0], [2, 87.28], [3, 111.16999999999999], [4, 135.97], [5, 157.1], [6, 180.07], [7, 203.04], [8, 225.09], [9, 248.06], [10, 269.19], [11, 292.15999999999997], [12, 312.37], [13, 331.67], [14, 353.71999999999997], [15, 372.09]],
+        "50ml_cap": [[0, 0.0], [5, 51.45], [10, 90.04], [15, 128.63], [20, 169.97000000000003], [25, 208.56], [30, 245.31], [35, 283.89000000000004], [40, 320.64000000000004], [45, 359.23], [50, 395.98]]
+    }
+
+    for i in range(len(ref[tube])-1):
+        v1, h1 = ref[tube][i]
+        v2, h2 = ref[tube][i+1]
+
+        # Check if h is between the second values of consecutive elements (Linear)
+        if h1 <= h <= h2:
+            # Linear interpolation between (x1, y1) and (x2, y2)
+            if i == 0:
+                volume = v1 + (v2 - v1) * ((h - h1) / (h2 - h1))**2
+            else:
+                volume = v1 + (v2 - v1) * (h - h1) / (h2 - h1)
+            return volume
+
+    # h is larger 
+    volume = v2 * (h/h2)  
+    # If no interval is found, return None or a specific value
+    return volume
+
+
 def free_line(pixel_list, center, bb_list, padding, thickness):
     """
     Check if a thickened line between 'start' and 'end' intersects any ellipse 
@@ -158,7 +183,6 @@ def best_pick(detection_result, rvec_base, joint, robot, T_cam_inv, camera_matri
     rotation = [seach_rotation[0]+i*(seach_rotation[1]-seach_rotation[0])/num_sample for i in range(num_sample)]
     
     for i in range(len(detection_result)):
-        print("#######", i,"#######")
         # belongs to the pick class
         if "tcp" not in detection_result[i]:
             continue
@@ -181,8 +205,7 @@ def best_pick(detection_result, rvec_base, joint, robot, T_cam_inv, camera_matri
         robot.kinematic.set_tcp_xyzabc(detection_result[i]["tcp"])
 
         # bb list
-        bb_list = [r["corners"] for r in detection_result if np.linalg.norm(np.array(r["center"])-np.array(detection_result[i]["center"])) < bb_radius]
-        bb_list.pop(i)
+        bb_list = [r["corners"] for r in detection_result[:i]+detection_result[i+1:] if np.linalg.norm(np.array(r["center"])-np.array(detection_result[i]["center"])) < bb_radius]
 
         # candidates
         pose_candidate = [xyz+robot.kinematic.rotate_rvec(rvec=rvec_base, axis=[0,0,1], angle=r, local=True) for r in rotation]
@@ -281,26 +304,66 @@ def decap(robot, cap_type, output_gripper_config, output_decap_config, place_pos
         # close
         robot.set_output(output_gripper_config[0], output_gripper_config[1])
         # rotate
-        robot.lmove(rel=1, z=1.1, a=-307.278746, b=-127.253498, vel=1000, accel=10000, jerk=20000)
+        robot.lmove(rel=1, z=1.2, a=-307.278746, b=-127.253498, vel=1500, accel=10000, jerk=40000)
+        #robot.lmove(rel=1, z=2.2, a=-178.936936, b=180.238781, c=-1.284735, vel=800, accel=10000, jerk=20000)
         # open
         robot.set_output(output_gripper_config[0], output_gripper_config[2])
         # rotate back
-        robot.jmove(rel=1, j5=90, vel=200, accel=10000, jerk=20000)
+        robot.jmove(rel=1, j5=90, vel=400, accel=10000, jerk=40000)
+        #robot.jmove(rel=1, j5=180, vel=300, accel=10000, jerk=20000)
 
     # grab the cap
     #robot.set_output(output_gripper_config[0], output_gripper_config[1])
 
 
-def barcode_read(robot, detection=None, num_img=10, bound=[-90, 90]):
-    num_img = 10
-    bound = [-90, 90]
-
-    for i in range(num_img):
-        robot.jmove(rel=0, j5=bound[0]+i*(bound[1]-bound[0])/num_img, vel=200, accel=10000, jerk=20000)
-        time.sleep(0.1)
+def barcode_read(robot, detection_level, classification_barcode, tube, num_img=5, bound=[0, 180]):
+    barcode = None
+    corners = None
+    volume = 0
+    # go to the start
+    robot.jmove(rel=0, j5=-90, vel=400, accel=10000, jerk=40000)
     
-    return True
+    for i in range(num_img+1):
+        time.sleep(0.1)
 
+        # level
+        if corners is None:
+            result = detection_level.run()
+            if result and result[0]["cls"] == "level":
+                corners = result[0]["corners"]
+                h = max([pxl[1] for pxl in corners])-min([pxl[1] for pxl in corners])
+                volume = volume_estimator(h, tube)
+                
+        # barcode
+        if barcode is None:
+            result = classification_barcode.run()
+            if result and result[0]["cls"] != "empty":
+                barcode = result[0]["cls"]
+                
+
+        # break
+        if corners is not None and barcode is not None:
+            break
+        
+        # move
+        robot.jmove(rel=1, j5=(bound[1]-bound[0])/num_img)
+        time.sleep(0.1)
+
+    return volume, corners, barcode
+
+
+def tube_img_barcode(img, corners, vertical_flip=True):
+    # plot the level to image
+    if corners is not None:
+        pts = np.array(corners, dtype=np.int32).reshape((-1, 1, 2))
+
+        # Draw the rectangle (closed polygon)
+        cv.polylines(img, [pts], isClosed=True, color=(203, 0, 255), thickness=1)
+
+    if vertical_flip:
+        img = cv.flip(img, 0)
+
+    return img
 
 class Plane_finder:
     def __init__(self, camera_matrix, dist_coeffs, frame_mat_inv, kinematic, min_error_threshold=5.0):
