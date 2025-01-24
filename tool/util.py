@@ -316,9 +316,10 @@ def decap(robot, cap_type, output_gripper_config, output_decap_config, place_pos
     #robot.set_output(output_gripper_config[0], output_gripper_config[1])
 
 
-def barcode_read(robot, detection_level, classification_barcode, tube, num_img=5, bound=[0, 180]):
+def barcode_read(robot, detection_level, tube, num_img=5, bound=[0, 180], barcode_list=["11245", "1854"]):	
     barcode = None
-    corners = None
+    corners_vol = None
+    corners_barcode = None
     volume = 0
     # go to the start
     robot.jmove(rel=0, j5=-90, vel=400, accel=10000, jerk=40000)
@@ -326,39 +327,52 @@ def barcode_read(robot, detection_level, classification_barcode, tube, num_img=5
     for i in range(num_img+1):
         time.sleep(0.1)
 
+        # detection
+        result = detection_level.run()
+
         # level
-        if corners is None:
-            result = detection_level.run()
-            if result and result[0]["cls"] == "level":
-                corners = result[0]["corners"]
-                h = max([pxl[1] for pxl in corners])-min([pxl[1] for pxl in corners])
-                volume = volume_estimator(h, tube)
+        if corners_vol is None and result is not None:
+            for r in result:
+                if r["cls"] == "level":
+                    corners_vol = r["corners"]
+                    h = max([pxl[1] for pxl in corners_vol])-min([pxl[1] for pxl in corners_vol])
+                    volume = volume_estimator(h, tube)
+                    break
                 
         # barcode
-        if barcode is None:
-            result = classification_barcode.run()
-            if result and result[0]["cls"] != "empty":
-                barcode = result[0]["cls"]
-                
+        if corners_barcode is None and result is not None:
+            for r in result:
+                if r["cls"] in barcode_list:
+                    corners_barcode = r["corners"]
+                    barcode = r["cls"]
+                    break                
 
         # break
-        if corners is not None and barcode is not None:
+        if corners_vol is not None and barcode is not None:
             break
         
         # move
         robot.jmove(rel=1, j5=(bound[1]-bound[0])/num_img)
         time.sleep(0.1)
 
-    return volume, corners, barcode
+    return volume, corners_vol, barcode, corners_barcode
 
 
-def tube_img_barcode(img, corners, vertical_flip=True):
+def tube_img_barcode(img, corners_vol, corners_barcode, vertical_flip=True):
     # plot the level to image
-    if corners is not None:
-        pts = np.array(corners, dtype=np.int32).reshape((-1, 1, 2))
+    if corners_vol is not None:
+        pts = np.array(corners_vol, dtype=np.int32).reshape((-1, 1, 2))
 
         # Draw the rectangle (closed polygon)
         cv.polylines(img, [pts], isClosed=True, color=(203, 0, 255), thickness=1)
+
+    # plot barcode to image
+    if corners_barcode is not None:
+        pts = np.array(corners_barcode, dtype=np.int32).reshape((-1, 1, 2))
+
+        # Draw the rectangle (closed polygon)
+        cv.polylines(img, [pts], isClosed=True, color=(0, 255, 0), thickness=1)
+
 
     if vertical_flip:
         img = cv.flip(img, 0)
