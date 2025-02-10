@@ -3,6 +3,7 @@ camera_ground_sn
 camera_robot_sn
 emergency
 speed_ratio
+tcp
 """
 
 import numpy as np
@@ -31,7 +32,8 @@ camera_robot_exposure = None
 robot
 """
 robot_ip = "192.168.1.100"# robot ip address
-tcp_length = 97.5+0 # Make sure to put the right toolhead length
+#tcp_length = 97.5+0 # Make sure to put the right toolhead length
+tcp_length = 97.5+1 # Make sure to put the right toolhead length
 output = [0, [0, 1]] # [output_pin, [off_action, on_action]]
 #emergency=["in0",[0, 1]] # [pin_index, [off_state, on_state]]
 emergency = None

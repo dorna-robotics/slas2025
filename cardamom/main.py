@@ -8,6 +8,9 @@ from paddleocr import PaddleOCR
 import config
 import time
 from dorna_vision import util
+import tracemalloc
+import psutil
+import os
 
 
 """
@@ -78,7 +81,8 @@ def weight_classification(results, weight_thr):
                 if result[1][1] >= conf:
                     weight = weight_tmp
                     conf = result[1][1]
-            except:
+            except Exception as ex:
+                print("error0: ", ex)
                 pass
     
         print("weight: ", weight)
@@ -145,6 +149,15 @@ def object_location(crop, robot, kinematic, T_cam_2_j4, camera, depth_frame, dep
     return cls, xyz_target_2_base, pxl, sol
 
 def main(cycles=1000000000):
+    # Start tracking memory usage
+    tracemalloc.start()
+
+    # Get total system memory
+    total_memory = psutil.virtual_memory().total
+
+    # Get CPU usage for the current process
+    pid = os.getpid()
+
     """
     Initialize model and export it to ncnn formt
     """
@@ -205,23 +218,51 @@ def main(cycles=1000000000):
     consecutive_mix = 0
     display_result = False # display images or not
     
-    for _ in range(cycles):
+    for k in range(cycles):
+        print("ali-1: ", k)
+        print("##############")
+        # Get total system memory
+        total_memory = psutil.virtual_memory().total
+        
+        # Get memory usage stats
+        current, peak = tracemalloc.get_traced_memory()
+        
+        # Convert to MB and calculate the percentage
+        current_mb = current / 1024 ** 2
+        peak_mb = peak / 1024 ** 2
+        current_percentage = (current / total_memory) * 100
+        peak_percentage = (peak / total_memory) * 100
+        process = psutil.Process(pid)
+        cpu_usage_percentage = process.cpu_percent(interval=1)  # interval to get accurate CPU usage
+        
+        # Get overall system CPU usage
+        system_cpu_usage = psutil.cpu_percent(interval=1)
+        
+        # Print memory and CPU usage
+        print(f"Current Memory Usage: {current_mb:.2f} MB ({current_percentage:.2f}%)")
+        print(f"Peak Memory Usage: {peak_mb:.2f} MB ({peak_percentage:.2f}%)")
+        print(f"Process CPU Usage: {cpu_usage_percentage:.2f}%")
+        print(f"System CPU Usage: {system_cpu_usage:.2f}%")
+        print("##############")
+        
         if robot.state == 0: # stopping -> stopped
             robot.set_alarm(0) # clear alarm
             robot.play_list(cmd_list=config.alarm_init)
             robot.state = 1 # stopped
+            print("ali0")
         
         elif robot.state == 2: # standby -> working
             robot.set_alarm(0) # clear alarm
             robot.play_list(cmd_list=config.work_init)
             robot.state = 3 # working
             tare_counter = config.tare_cycle # run the
+            print("ali1")
         
         elif robot.state == 3:
             # update time
             stat["time_passed"] = time.time()-start_time
             stat["avg_time"] = stat["time_passed"] /max(1,stat["picked"])
-            
+            print("ali4")
             """
             failed counter
             """
@@ -229,6 +270,7 @@ def main(cycles=1000000000):
                 consecutive_failiure_counter = 0 # restart
                 robot.play_list(cmd_list=config.bin_mix)
                 consecutive_mix += 1 # update consecutive mix
+                print("ali5")
                 continue
         
             """
@@ -237,6 +279,7 @@ def main(cycles=1000000000):
             if tare_counter >= config.tare_cycle:
                 tare_counter = 0
                 robot.play_list(cmd_list=config.tare)
+                print("ali6")
                 continue
             
             """
@@ -246,24 +289,26 @@ def main(cycles=1000000000):
             depth_frame, _, _, _, _, color_img, depth_int, _, _= camera_robot.get_all() # camera data
             crop = util.Crop(color_img, config.bin_roi, rot=True)
             color_img_mask = crop.cropped_img
-            
+            print("ali7")
             results = net(color_img_mask, half=True, conf=config.detection_conf, max_det=config.max_det, verbose=False) # detection
             cls, xyz_target_2_base, pxl, sol = object_location(crop, robot, kinematic, config.T_cam_2_j4, camera_robot, depth_frame, depth_int, results, config.area_thr, config.xyz_thr) # picking candidate
-        
+            print("ali8")
                     
             #sol = False
             if not sol: # no candidate
                 consecutive_failiure_counter += 1
+                print("ali9")
                 continue
             consecutive_failiure_counter = 0 # reset counter
             consecutive_mix = 0 # reset counter
-        
+            print("ali10")
             """
             save image
             """
             if save_img > 0: #
                 cv2.imwrite("img/"+str(time.time())+".jpg", color_img)
                 save_img -= 1
+                print("ali11")
             
             """
             picking
@@ -272,19 +317,21 @@ def main(cycles=1000000000):
 
             robot.play_list(cmd_list=config.pick) # pick
             stat["try"] += 1 # update stat
-            
+            print("ali12")
             """
             bad after pick
             """
             if cls == 0: # bad
                 robot.play_list(cmd_list=config.bad_bin_after_pick) # drop
                 stat["bad"] += 1 # update stat
+                print("ali13")
                 continue
             
             """
             check successful pick
             """
             if config.camera_ground_sn is not None:
+                print("ali14")
                 robot.play_list(cmd_list=config.quality)
                 _, _, _, _, _, color_img, _, _, _= camera_ground.get_all() # camera data
                 crop = util.Crop(color_img, config.quality_roi, rot=False)
@@ -296,20 +343,24 @@ def main(cycles=1000000000):
                     
                 if cls == -1: # no pick
                     stat["failed"] += 1
+                    print("ali15")
                     continue
                 elif cls == 0: # bad
                     robot.play_list(cmd_list=config.bad_bin_after_quality) # drop
                     stat["picked"] += 1
                     stat["bad"] += 1
+                    print("ali16")
                     continue
             else:
                 robot.play_list(cmd_list=[config.bin_image[0]])
+                print("ali17")
                 
         
             """
             quality check: multi bottom
             """
             if config.quality_more["multi_bottom"]:
+                print("ali18")
                 # takes 4 images
                 color_img_mask_list = []
                 for j5 in [-30, 30, 90]:
@@ -318,6 +369,7 @@ def main(cycles=1000000000):
                     _, _, _, _, _, color_img, _, _, _= camera_ground.get_all() # camera data
                     crop = util.Crop(color_img, config.quality_roi, rot=False)
                     color_img_mask_list.append(crop.cropped_img) # mask
+                    print("ali19")
             
                 
                 # form larger image
@@ -330,11 +382,13 @@ def main(cycles=1000000000):
                 """
                 if cls == -1: # no pick
                     stat["failed"] += 1
+                    print("ali20")
                     continue
                 elif cls == 0: # bad
                     robot.play_list(cmd_list=config.bad_bin_after_quality) # drop
                     stat["picked"] += 1
                     stat["bad"] += 1
+                    print("ali21")
                     continue
         
             """
@@ -351,8 +405,10 @@ def main(cycles=1000000000):
                 # quality check
                 results = net(color_img_mask, half=True, conf=config.detection_conf, verbose=False) # detection
                 cls = img_classification(results, config.area_thr) # quality decision
+                print("ali22")
         
             else:
+                print("ali23")
                 cls = 1
             
             if cls != 0:
@@ -365,22 +421,30 @@ def main(cycles=1000000000):
                 color_img_mask = util.roi_mask(color_img, config.ocr_roi)
                 results = ocr.ocr(color_img_mask, cls=False)  # ocr
                 cls = weight_classification(results, config.weight_thr) # classification
+                print("ali24")
                 
                 
             
             if cls <= 0: # bad
                 robot.play_list(cmd_list=config.drop_bad)
                 stat["bad"] += 1 #update stat
+                print("ali25")
             else: # good
                 robot.play_list(cmd_list=config.drop_good[0:4])
                 stat["good"] += 1 #update stat
+                print("ali26")
             
             # increase weight counter
             stat["picked"] += 1 #update stat
             tare_counter += 1 # update stat
+            print("ali27")
         else:
             time.sleep(0.1)
+            print("ali28")
 
+    print("end")
+    # Stop tracking memory usage
+    tracemalloc.stop()
 
 if __name__ == "__main__":
     main()
