@@ -160,7 +160,6 @@ def valid_pick(pose, bb_list, robot, cam_T, camera_matrix, dist_coeffs, padding,
 
     # add O
     point_list.append([O])
-    
     #Perform projection
     try:
         res_list, _ =  cv.projectPoints(np.array(point_list), np.zeros((3, 1)), np.zeros((3, 1)), camera_matrix, dist_coeffs)
@@ -171,7 +170,7 @@ def valid_pick(pose, bb_list, robot, cam_T, camera_matrix, dist_coeffs, padding,
             pixel_list[i] = (int(pixel_list[i][0]+offset[0]), int(pixel_list[i][1]+offset[1]))
 
         valid = free_line(pixel_list, center, bb_list, padding, thickness)
-    except:
+    except Exception as ex:
         pass
     return valid, pixel_list, center
 
@@ -237,7 +236,6 @@ def best_pick_old(detection_result, rvec_base, joint, robot, T_cam_inv, camera_m
     # init
     retval = None
     rotation = [seach_rotation[0]+i*(seach_rotation[1]-seach_rotation[0])/num_sample for i in range(num_sample)]
-    
     for i in range(len(detection_result)):
         # belongs to the pick class
         if "tcp" not in detection_result[i]:
@@ -477,7 +475,6 @@ class Plane_finder:
                         best_rvec = rvec
                         best_tvec = tvec
             except Exception as e:
-                print("Error:", e)
                 pass
         if best_rvec is not None and best_tvec is not None:
             # Convert rotation vector to rotation matrix
