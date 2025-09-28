@@ -149,15 +149,6 @@ def object_location(crop, robot, kinematic, T_cam_2_j4, camera, depth_frame, dep
     return cls, xyz_target_2_base, pxl, sol
 
 def main(cycles=1000000000):
-    # Start tracking memory usage
-    tracemalloc.start()
-
-    # Get total system memory
-    total_memory = psutil.virtual_memory().total
-
-    # Get CPU usage for the current process
-    pid = os.getpid()
-
     """
     Initialize model and export it to ncnn formt
     """

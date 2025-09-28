@@ -18,21 +18,50 @@ state
 """
 camera
 """
-#camera_ground_sn = "140122073620" # ground camera SN
-#camera_robot_sn = "130322272986" # on robot camera SN
 camera_ground_sn = None # ground camera SN
-camera_robot_sn = "130322272239" # on robot camera SN
+camera_robot_sn = "" # on robot camera SN
 camera_ground_preset_path = "Intel_RealSense_D435.json" # preset path
 camera_robot_preset_path = "Intel_RealSense_D405.json" # preset path
 camera_ground_exposure = None
-#camera_robot_exposure = 90000
 camera_robot_exposure = None
+
+"""
+detection
+"""
+detection_prm ={
+    "cardamom": {
+        "camera_mount":{
+            "type": "dorna_ta_j4",
+            "ej": [0 ,0, 0, 0, 0, 0, 0, 0],
+            "T": [46.5174596+2-1+0.5, 32.0776662-5+1, -4.24772615, -0.27547989, 0.27691881, 89.6939516],
+        },        
+        'roi': {'corners': [[448.23, 3.04], [234.58, 304.15], [481.21, 473.35], [580.15, 471.92], [763.68, 213.82], [494.12, 13.07]], 'inv': False, 'crop': True, 'offset': 0},
+        'detection': {'cmd': 'od', 'path': 'model/cardamom.pkl', 'conf': 0.23000000000000004, 'cls': []},
+        'sort': {'cmd': 'area', 'ascending': False, 'max_det': 50},
+        'limit': {
+            'center': {'width': [420, 560], 'height': [170, 330], 'inv': 0},
+            'xyz': {'x': [-1000, 1000], 'y': [-1000, 1000], 'z': [0, 87], 'inv': 0}
+            },  
+        'display': {'label': 0, 'save_img': False, 'save_img_roi': False}
+        },
+
+
+    "digit":{
+        'roi': {'corners': [[379.41, 256.72], [379.41, 305.47], [509.89, 305.47], [522.79, 258.15]], 'inv': False, 'crop': True, 'offset': 0}, 
+        'detection': {'cmd': 'ocr', 'conf': 0.03}
+    }
+}
+
+"""
+weight
+"""
+cycles = 100000
 
 """
 robot
 """
-robot_ip = "192.168.1.100"# robot ip address
-#tcp_length = 97.5+0 # Make sure to put the right toolhead length
+robot_ip = "10.0.0.102"# robot ip address
+#tcp_length = 97.5+1-13 # Make sure to put the right toolhead length
 tcp_length = 97.5+1 # Make sure to put the right toolhead length
 output = [0, [0, 1]] # [output_pin, [off_action, on_action]]
 #emergency=["in0",[0, 1]] # [pin_index, [off_state, on_state]]
@@ -72,10 +101,6 @@ max_det = 10
 area_thr = [500, 12000] # min and max area
 #xyz_thr_old = [[190,290], [-260, -160], [3, 90]] # with respect to the robot base
 xyz_thr = [[90,175], [-250, -170], [2, 80]] # with respect to the robot base
-#roi_bin = [[550, 890], [236, 525]]  # [[x_min, x_max], [y_min, y_max]]
-#roi_quality = [[285, 430], [160, 315]] # [[x_min, x_max], [y_min, y_max]]
-#roi_ocr = [[758, 786], [542, 606]] # [[x_min, x_max], [y_min, y_max]]
-#quality_roi = [[282, 168], [436, 168], [436, 349], [282, 349]]
 quality_roi = [[560, 190], [560, 1], [847, 1], [847, 190]]
 
 
@@ -99,7 +124,7 @@ quality_more = {"multi_bottom":False, "second_top":False} # number of time we wi
 """
 weight
 """
-weight_thr = 0.35 # gram
+weight_thr = 0.15 # gram
 font_path = "simfang.ttf"
 tare_cycle = 100
 
@@ -152,12 +177,21 @@ bin_image = [
 ]
 
 # after bin imaging
+
 pick = [
     {"cmd":"lmove","rel":0,"vel": 500, "accel": 4000,"jerk":8000},
     {"cmd": "output", "out"+str(output[0]): output[1][1], "queue":0},
-    {"cmd":"lmove","rel":1, "z": -11},
+    {"cmd":"lmove","rel":1, "z": -9, "vel": 20},
+]
+
+"""
+pick = [
+    {"cmd":"lmove","rel":0,"vel": 500, "accel": 4000,"jerk":8000},
+    {"cmd": "output", "out"+str(output[0]): output[1][1], "queue":0},
+    {"cmd":"lmove","rel":1, "z": -11, "vel": 20},
     {"cmd":"cmove","rel":1, "x": 2, "y":2, "z":-2, "mx":2, "my":-2, "mz":-2, "vel":40},
 ]
+"""
 
 # after bin imaging
 """
@@ -211,7 +245,7 @@ bad_bin_after_quality = [
 
 # after quality_1
 quality_2=[
-    {"cmd":"jmove","rel":0,"j0":-9.667969,"j1":73.740234,"j2":-118.146973,"j3":1.318359,"j4":-44.780273,"j5":0, "vel": vel, "accel": accel, "jerk": jerk, "cont": 0},
+    {"cmd":"jmove","rel":0,"j0":-9.667969,"j1":77.651367,"j2":-114.938965,"j3":1.186523,"j4":-51.899414,"j5":0, "vel": vel, "accel": accel, "jerk": jerk, "cont": 0},
     {"cmd":"jmove","rel":0,"j0":-8.129883,"j1":60.88623,"j2":-101.66748,"j3":1.208496,"j4":-48.383789,"j5":0},
     {"cmd":"jmove","rel":0,"j0":-8.129883,"j1":59.985352,"j2":-102.23877,"j3":1.252441,"j4":-46.911621,"j5":0},
     {"cmd": "output", "out"+str(output[0]): output[1][0], "queue":0},
@@ -225,7 +259,6 @@ quality_2=[
 
 # after quality_2
 weight = [
-    #{"cmd":"jmove","rel":0,"j0":0.285645,"j1":94.63623,"j2":-157.060547,"j3":2.219238,"j4":-13.776855,"j5":0, "vel": vel, "accel": accel,"jerk": jerk},
     {"cmd":"jmove","rel":0,"j0":0,"j1":92,"j2":-147,"j3":-2,"j4":-40,"j5":0},
     {"cmd":"sleep", "time": 0.2},
 ]
